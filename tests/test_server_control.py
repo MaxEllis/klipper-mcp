@@ -36,7 +36,7 @@ async def test_set_temperature_confirm_sends_gcode(monkeypatch):
     script = respx.post(url__regex=rf"{B}/printer/gcode/script.*").mock(return_value=httpx.Response(200, json={"result": "ok"}))
     out = await srv.set_temperature("bed", 60, confirm=True)
     assert out["ok"] is True
-    assert "HEATER=heater_bed" in str(script.calls.last.request.url) and "TARGET=60" in str(script.calls.last.request.url)
+    assert script.calls.last.request.url.params["script"] == "SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=60"
 
 
 @respx.mock
