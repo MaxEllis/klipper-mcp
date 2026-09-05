@@ -1,10 +1,12 @@
 from __future__ import annotations
+from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from .config import load_config
 from .client import MoonrakerClient
 from .errors import ApiError, Refused, PrinterNotReady
 from . import gate
+from . import outcomes
 from .status import summarize_status, STATUS_OBJECTS
 
 mcp = FastMCP("klipper")
@@ -244,6 +246,49 @@ async def emergency_stop() -> dict:
         return _err(e)
 
 
+@mcp.tool()
+async def start_print(path: str, confirm: bool = False) -> dict:
+    """Start a print. path = a LOCAL gcode file on this server (e.g. one saved by orcaslicer-mcp's
+    save_gcode; it is uploaded to the printer under its basename) OR a bare filename already on the
+    printer (see list_gcode_files; no upload). TWO-PHASE: without confirm=true this returns a preview
+    and changes nothing; ask the user, then call again with confirm=true. Refused unless
+    Klipper is ready and idle."""
+    try:
+        local = Path(path)
+        is_local = local.exists() and local.is_file()
+        filename = local.name if is_local else Path(path).name
+        async with _client() as c:
+            _, st = await _ready_and_status(c)
+            if st["job"]["state"] in ("printing", "paused"):
+                return {"error": "printer_busy", "current": _job_preview(st)}
+            if not is_local:
+                if "/" in path:
+                    return {"error": "file_not_found", "path": path}
+                on_pi = {f.get("path") for f in await c.files_list("gcodes")}
+                if filename not in on_pi:
+                    return {"error": "file_not_found", "path": path,
+                            "hint": "not a local file and not on the printer; see list_gcode_files"}
+            preview = {"filename": filename, "upload_needed": is_local,
+                       "size_bytes": local.stat().st_size if is_local else None,
+                       "klippy_state": st["klippy"]["state"], "job_state": st["job"]["state"]}
+            if not confirm:
+                return gate.confirm_required("start_print", preview)
+            if is_local:
+                await c.upload_gcode(str(local), filename)
+            await c.print_start(filename)
+        return {"ok": True, "action": "start_print", "filename": filename, "uploaded": is_local}
+    except (PrinterNotReady, ApiError) as e:
+        return _err(e)
+
+
+@mcp.tool()
+def record_verdict(verdict: str, gcode_filename: str | None = None) -> dict:
+    """Attach your quality judgement to a finished print in the shared outcome memory, e.g. 'warped',
+    'stringing', 'clean', 'layer shift at 40%'. Defaults to the most recently finished print;
+    pass gcode_filename to target another. This is what lets the slicer learn from real results."""
+    return outcomes.set_verdict(verdict, gcode_filename)
+
+
 _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     # name: (title, read_only, destructive)
     "get_printer_status": ("Get live printer status", True, False),
@@ -258,6 +303,8 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "send_gcode": ("Send raw G-code", False, True),
     "firmware_restart": ("Firmware restart", False, True),
     "emergency_stop": ("Emergency stop", False, True),
+    "start_print": ("Start print (upload + start)", False, True),
+    "record_verdict": ("Record print verdict", False, False),
 }
 
 
