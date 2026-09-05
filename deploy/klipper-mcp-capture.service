@@ -1,0 +1,21 @@
+[Unit]
+Description=klipper-mcp capture: record finished prints from Moonraker into the shared outcome store
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=max
+Group=max
+WorkingDirectory=/home/max/projects/klipper-mcp
+Environment=MOONRAKER_URL=http://klipper.local:7125
+Environment=MOONRAKER_FALLBACK_URL=http://192.168.1.128:7125
+Environment=PRINT_OUTCOMES_DIR=/home/max/projects/_shared/print-outcomes
+ExecStart=/home/max/projects/klipper-mcp/.venv/bin/klipper-mcp-capture
+Restart=always
+RestartSec=10
+MemoryMax=200M
+CPUQuota=20%
+
+[Install]
+WantedBy=multi-user.target
