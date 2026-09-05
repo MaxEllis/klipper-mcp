@@ -3,7 +3,8 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from .config import load_config
 from .client import MoonrakerClient
-from .errors import ApiError
+from .errors import ApiError, Refused, PrinterNotReady
+from . import gate
 from .status import summarize_status, STATUS_OBJECTS
 
 mcp = FastMCP("klipper")
@@ -86,12 +87,162 @@ async def list_gcode_files(limit: int = 50) -> dict:
         return _err(e)
 
 
+_HEATERS = {"extruder": "extruder", "bed": "heater_bed", "heater_bed": "heater_bed"}
+
+
+async def _ready_and_status(c) -> tuple[dict, dict]:
+    """Return (printer_info, status_summary); raise PrinterNotReady if Klipper is not ready."""
+    info = await c.printer_info()
+    gate.require_ready(info)
+    return info, summarize_status(await c.objects_query(STATUS_OBJECTS))
+
+
+def _job_preview(st: dict) -> dict:
+    return {"filename": st["job"]["filename"], "job_state": st["job"]["state"],
+            "progress_percent": st["job"]["progress_percent"]}
+
+
+@mcp.tool()
+async def set_temperature(heater: str, target: float, confirm: bool = False) -> dict:
+    """Set a heater target. heater: 'extruder' or 'bed'. TWO-PHASE: without confirm=true this only
+    returns a preview (exact gcode, current temp) and changes nothing; call again with confirm=true
+    after the user agrees. Hard ceilings: extruder 300C, bed 110C. Refused unless Klipper is ready."""
+    try:
+        h = _HEATERS.get(heater)
+        if not h:
+            return {"error": f"unknown heater '{heater}' (use 'extruder' or 'bed')"}
+        gate.check_bounds(**({"extruder_c": target} if h == "extruder" else {"bed_c": target}))
+        gcode = f"SET_HEATER_TEMPERATURE HEATER={h} TARGET={float(target):g}"
+        async with _client() as c:
+            _, st = await _ready_and_status(c)
+            cur = st["temps"]["extruder" if h == "extruder" else "bed"]["actual"]
+            if not confirm:
+                return gate.confirm_required("set_temperature", {"heater": h, "target_c": target,
+                                                                 "current_c": cur, "gcode": gcode})
+            await c.gcode_script(gcode)
+        return {"ok": True, "action": "set_temperature", "heater": h, "target_c": target}
+    except (Refused, PrinterNotReady, ApiError) as e:
+        return _err(e)
+
+
+async def _job_control(action: str, confirm: bool) -> dict:
+    try:
+        async with _client() as c:
+            _, st = await _ready_and_status(c)
+            if not confirm:
+                return gate.confirm_required(action, _job_preview(st))
+            await getattr(c, f"print_{action.split('_')[0]}")()
+        return {"ok": True, "action": action, **_job_preview(st)}
+    except (PrinterNotReady, ApiError) as e:
+        return _err(e)
+
+
+@mcp.tool()
+async def pause_print(confirm: bool = False) -> dict:
+    """Pause the running print. TWO-PHASE: preview without confirm=true, act with it."""
+    return await _job_control("pause_print", confirm)
+
+
+@mcp.tool()
+async def resume_print(confirm: bool = False) -> dict:
+    """Resume a paused print. TWO-PHASE: preview without confirm=true, act with it."""
+    return await _job_control("resume_print", confirm)
+
+
+@mcp.tool()
+async def cancel_print(confirm: bool = False) -> dict:
+    """Cancel the running print (irreversible). TWO-PHASE: preview without confirm=true, act with it."""
+    return await _job_control("cancel_print", confirm)
+
+
+@mcp.tool()
+async def tune_live(pressure_advance: float | None = None, z_offset: float | None = None,
+                    flow_percent: float | None = None, fan_percent: float | None = None,
+                    confirm: bool = False) -> dict:
+    """Live-tune the running (or next) print: pressure_advance (0..1), z_offset in mm (-2..2, absolute
+    baby-step offset), flow_percent (50..150), fan_percent (0..100). TWO-PHASE: without confirm=true
+    returns the exact gcode lines and current values; with it, sends them one by one. Refused unless
+    Klipper is ready."""
+    try:
+        lines = gate.tune_gcode(pressure_advance, z_offset, flow_percent, fan_percent)
+        if not lines:
+            return {"error": "nothing_to_tune"}
+        gate.check_bounds(pressure_advance=pressure_advance, z_offset=z_offset,
+                          flow_percent=flow_percent, fan_percent=fan_percent)
+        async with _client() as c:
+            _, st = await _ready_and_status(c)
+            current = {"pressure_advance": st["pressure_advance"], "z_offset": st["z_offset"],
+                       "flow_factor": st["flow_factor"], "fan_percent": st["fan_percent"]}
+            if not confirm:
+                return gate.confirm_required("tune_live", {"gcode": lines, "current": current})
+            for line in lines:
+                await c.gcode_script(line)
+        return {"ok": True, "action": "tune_live", "sent": lines}
+    except (Refused, PrinterNotReady, ApiError) as e:
+        return _err(e)
+
+
+@mcp.tool()
+async def send_gcode(script: str, confirm: bool = False) -> dict:
+    """Send raw G-code / a Klipper macro. The general actuator behind the specific tools; prefer
+    those. TWO-PHASE: preview without confirm=true, act with it. Refused unless Klipper is ready."""
+    try:
+        script = script.strip()
+        if not script:
+            return {"error": "empty_script"}
+        async with _client() as c:
+            _, st = await _ready_and_status(c)
+            if not confirm:
+                return gate.confirm_required("send_gcode", {"gcode": script, **_job_preview(st)})
+            await c.gcode_script(script)
+        return {"ok": True, "action": "send_gcode", "sent": script}
+    except (PrinterNotReady, ApiError) as e:
+        return _err(e)
+
+
+@mcp.tool()
+async def firmware_restart(confirm: bool = False) -> dict:
+    """FIRMWARE_RESTART: recover Klipper from a shutdown state (e.g. after power-cycling the printer).
+    Does NOT require Klipper to be ready (it is the fix for not-ready). TWO-PHASE: preview shows the
+    current state message; confirm=true acts."""
+    try:
+        async with _client() as c:
+            info = await c.printer_info()
+            if not confirm:
+                return gate.confirm_required("firmware_restart", {
+                    "klippy_state": info.get("state"), "klippy_message": (info.get("state_message") or "").strip()})
+            await c.firmware_restart()
+        return {"ok": True, "action": "firmware_restart", "was_state": info.get("state")}
+    except ApiError as e:
+        return _err(e)
+
+
+@mcp.tool()
+async def emergency_stop() -> dict:
+    """EMERGENCY STOP: immediately halts the printer (Klipper enters shutdown; heaters and motors off).
+    Acts at once, no preview, because a delay would defeat its purpose. Recover with firmware_restart."""
+    try:
+        async with _client() as c:
+            await c.emergency_stop()
+        return {"ok": True, "action": "emergency_stop"}
+    except ApiError as e:
+        return _err(e)
+
+
 _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     # name: (title, read_only, destructive)
     "get_printer_status": ("Get live printer status", True, False),
     "get_printer_info": ("Get Klipper host info", True, False),
     "list_print_history": ("List print history", True, False),
     "list_gcode_files": ("List G-code files on printer", True, False),
+    "set_temperature": ("Set heater temperature", False, True),
+    "pause_print": ("Pause print", False, True),
+    "resume_print": ("Resume print", False, True),
+    "cancel_print": ("Cancel print", False, True),
+    "tune_live": ("Live-tune PA / Z / flow / fan", False, True),
+    "send_gcode": ("Send raw G-code", False, True),
+    "firmware_restart": ("Firmware restart", False, True),
+    "emergency_stop": ("Emergency stop", False, True),
 }
 
 
