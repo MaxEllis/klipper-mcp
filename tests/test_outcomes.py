@@ -1,4 +1,5 @@
-import json
+import pytest
+
 from klipper_mcp import outcomes as oc
 
 JOB = {"job_id": "000092", "filename": "cube_PLA_20m.gcode", "status": "completed",
@@ -85,3 +86,30 @@ def test_geometry_hash_is_stable_and_order_independent():
     b = list(reversed(a))
     assert oc.geometry_hash_for(a) == oc.geometry_hash_for(b)
     assert oc.geometry_hash_for(a) != oc.geometry_hash_for([{"name": "cube", "size_mm": [21, 20, 20]}])
+
+
+def test_recall_on_absent_store_returns_empty_and_creates_no_file(monkeypatch, tmp_path):
+    _use_tmp(monkeypatch, tmp_path)
+    assert oc.recall(model_name="x") == []
+    assert not oc.db_path().exists()
+
+
+def test_connect_without_create_on_absent_path_raises_and_creates_no_file(monkeypatch, tmp_path):
+    _use_tmp(monkeypatch, tmp_path)
+    with pytest.raises(FileNotFoundError):
+        oc.connect(create=False)
+    assert not oc.db_path().exists()
+
+
+def test_set_verdict_targets_latest_printed_row_for_given_filename(monkeypatch, tmp_path):
+    _use_tmp(monkeypatch, tmp_path)
+    oc.record_outcome(JOB)
+    out = oc.set_verdict("clean", gcode_filename="cube_PLA_20m.gcode")
+    assert out["human_verdict"] == "clean"
+    assert out["gcode_filename"] == "cube_PLA_20m.gcode"
+    assert oc.recall(limit=1)[0]["human_verdict"] == "clean"
+
+
+def test_set_verdict_on_empty_store_returns_error(monkeypatch, tmp_path):
+    _use_tmp(monkeypatch, tmp_path)
+    assert oc.set_verdict("x") == {"error": "no_printed_job_found"}
