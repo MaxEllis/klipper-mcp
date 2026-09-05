@@ -29,7 +29,11 @@ def handle_message(raw: str, printer_id: str) -> int | None:
         return None
     params = msg.get("params") or [{}]
     ev = params[0] if isinstance(params, list) and params else {}
-    job = ev.get("job") or {}
+    if not isinstance(ev, dict):
+        ev = {}
+    job = ev.get("job")
+    if not isinstance(job, dict):
+        return None
     if ev.get("action") != "finished" or job.get("status") not in FINISHED_STATUSES:
         return None
     rid = outcomes.record_outcome(job, printer_id)
@@ -44,7 +48,10 @@ async def backfill(client: MoonrakerClient, printer_id: str) -> int:
     for job in jobs:
         if job.get("status") not in FINISHED_STATUSES:
             continue
-        end = job.get("end_time") or 0
+        try:
+            end = float(job.get("end_time") or 0)
+        except (TypeError, ValueError):
+            continue
         if end <= since:
             continue
         outcomes.record_outcome(job, printer_id)
@@ -52,6 +59,14 @@ async def backfill(client: MoonrakerClient, printer_id: str) -> int:
     if n:
         log.info("backfilled %d finished job(s) since %s", n, since)
     return n
+
+
+async def _after_disconnect(delay: float) -> float:
+    """Sleep out the current backoff delay after a disconnect (clean or errored),
+    then return the next (doubled, capped) delay. Isolated so it can be unit-tested
+    without a real websocket."""
+    await asyncio.sleep(delay)
+    return min(delay * 2, 60.0)
 
 
 async def run(stop: asyncio.Event | None = None) -> None:
@@ -72,12 +87,16 @@ async def run(stop: asyncio.Event | None = None) -> None:
                                           "id": 1}))
                 async for raw in ws:
                     handle_message(raw, cfg.printer_id)
+            # The websocket closed without raising (e.g. a clean server-side close,
+            # code 1000 on a Moonraker restart). Falling out of the read loop is still
+            # a disconnect -- never spin straight back into reconnecting.
+            log.warning("websocket closed; reconnecting in %.0fs", delay)
+            delay = await _after_disconnect(delay)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - a daemon must survive anything and retry
             log.warning("capture loop error: %s; retrying in %.0fs", e, delay)
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 60.0)
+            delay = await _after_disconnect(delay)
 
 
 def main() -> None:

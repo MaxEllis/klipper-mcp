@@ -34,6 +34,30 @@ def test_ws_url():
     assert capture.ws_url("https://k:443") == "wss://k:443/websocket"
 
 
+def test_handle_message_odd_but_valid_json_does_not_raise(monkeypatch, tmp_path):
+    monkeypatch.setenv("PRINT_OUTCOMES_DIR", str(tmp_path))
+    # params[0] is not a dict at all
+    frame = json.dumps({"jsonrpc": "2.0", "method": "notify_history_changed", "params": ["x"]})
+    assert capture.handle_message(frame, "swx2") is None
+    # job is a string, not a dict
+    frame2 = _frame("finished", "not-a-job")
+    assert capture.handle_message(frame2, "swx2") is None
+    assert oc.is_available() is False  # nothing was ever written
+
+
+async def test_after_disconnect_doubles_and_caps(monkeypatch):
+    calls = []
+
+    async def fake_sleep(seconds):
+        calls.append(seconds)
+
+    monkeypatch.setattr(capture.asyncio, "sleep", fake_sleep)
+    assert await capture._after_disconnect(2.0) == 4.0
+    assert await capture._after_disconnect(45.0) == 60.0
+    assert await capture._after_disconnect(60.0) == 60.0
+    assert calls == [2.0, 45.0, 60.0]
+
+
 @respx.mock
 async def test_backfill_records_only_newer_finished_jobs(monkeypatch, tmp_path):
     monkeypatch.setenv("PRINT_OUTCOMES_DIR", str(tmp_path))
