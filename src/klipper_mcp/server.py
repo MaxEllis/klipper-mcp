@@ -104,9 +104,9 @@ def _job_preview(st: dict) -> dict:
 
 @mcp.tool()
 async def set_temperature(heater: str, target: float, confirm: bool = False) -> dict:
-    """Set a heater target. heater: 'extruder' or 'bed'. TWO-PHASE: without confirm=true this only
-    returns a preview (exact gcode, current temp) and changes nothing; call again with confirm=true
-    after the user agrees. Hard ceilings: extruder 300C, bed 110C. Refused unless Klipper is ready."""
+    """Set a heater target. heater: 'extruder' or 'bed'. Hard ceilings: extruder 300C, bed 110C.
+    Refused unless Klipper is ready. TWO-PHASE: without confirm=true this returns a preview and
+    changes nothing; ask the user, then call again with confirm=true."""
     try:
         h = _HEATERS.get(heater)
         if not h:
@@ -125,33 +125,39 @@ async def set_temperature(heater: str, target: float, confirm: bool = False) -> 
         return _err(e)
 
 
+_JOB_METHODS = {"pause_print": "print_pause", "resume_print": "print_resume", "cancel_print": "print_cancel"}
+
+
 async def _job_control(action: str, confirm: bool) -> dict:
     try:
         async with _client() as c:
             _, st = await _ready_and_status(c)
             if not confirm:
                 return gate.confirm_required(action, _job_preview(st))
-            await getattr(c, f"print_{action.split('_')[0]}")()
-        return {"ok": True, "action": action, **_job_preview(st)}
+            await getattr(c, _JOB_METHODS[action])()
+        return {"ok": True, "action": action, "was": _job_preview(st)}
     except (PrinterNotReady, ApiError) as e:
         return _err(e)
 
 
 @mcp.tool()
 async def pause_print(confirm: bool = False) -> dict:
-    """Pause the running print. TWO-PHASE: preview without confirm=true, act with it."""
+    """Pause the running print. TWO-PHASE: without confirm=true this returns a preview and changes
+    nothing; ask the user, then call again with confirm=true."""
     return await _job_control("pause_print", confirm)
 
 
 @mcp.tool()
 async def resume_print(confirm: bool = False) -> dict:
-    """Resume a paused print. TWO-PHASE: preview without confirm=true, act with it."""
+    """Resume a paused print. TWO-PHASE: without confirm=true this returns a preview and changes
+    nothing; ask the user, then call again with confirm=true."""
     return await _job_control("resume_print", confirm)
 
 
 @mcp.tool()
 async def cancel_print(confirm: bool = False) -> dict:
-    """Cancel the running print (irreversible). TWO-PHASE: preview without confirm=true, act with it."""
+    """Cancel the running print (irreversible). TWO-PHASE: without confirm=true this returns a
+    preview and changes nothing; ask the user, then call again with confirm=true."""
     return await _job_control("cancel_print", confirm)
 
 
@@ -160,9 +166,10 @@ async def tune_live(pressure_advance: float | None = None, z_offset: float | Non
                     flow_percent: float | None = None, fan_percent: float | None = None,
                     confirm: bool = False) -> dict:
     """Live-tune the running (or next) print: pressure_advance (0..1), z_offset in mm (-2..2, absolute
-    baby-step offset), flow_percent (50..150), fan_percent (0..100). TWO-PHASE: without confirm=true
-    returns the exact gcode lines and current values; with it, sends them one by one. Refused unless
-    Klipper is ready."""
+    baby-step offset), flow_percent (50..150), fan_percent (0..100). Sends each provided value as its
+    own gcode line, in sequence, under a single confirmation. Refused unless Klipper is ready.
+    TWO-PHASE: without confirm=true this returns a preview (the exact gcode lines and current values)
+    and changes nothing; ask the user, then call again with confirm=true."""
     try:
         lines = gate.tune_gcode(pressure_advance, z_offset, flow_percent, fan_percent)
         if not lines:
@@ -175,8 +182,11 @@ async def tune_live(pressure_advance: float | None = None, z_offset: float | Non
                        "flow_factor": st["flow_factor"], "fan_percent": st["fan_percent"]}
             if not confirm:
                 return gate.confirm_required("tune_live", {"gcode": lines, "current": current})
-            for line in lines:
-                await c.gcode_script(line)
+            for i, line in enumerate(lines):
+                try:
+                    await c.gcode_script(line)
+                except ApiError as e:
+                    return {"error": str(e), "sent": lines[:i], "not_sent": lines[i:]}
         return {"ok": True, "action": "tune_live", "sent": lines}
     except (Refused, PrinterNotReady, ApiError) as e:
         return _err(e)
@@ -184,8 +194,12 @@ async def tune_live(pressure_advance: float | None = None, z_offset: float | Non
 
 @mcp.tool()
 async def send_gcode(script: str, confirm: bool = False) -> dict:
-    """Send raw G-code / a Klipper macro. The general actuator behind the specific tools; prefer
-    those. TWO-PHASE: preview without confirm=true, act with it. Refused unless Klipper is ready."""
+    """Send raw G-code / a Klipper macro, VERBATIM: no rewriting. Multiple lines are allowed and all
+    execute under the single confirmation. The numeric ceilings enforced by set_temperature/tune_live
+    do NOT apply on this path; the preview shows the exact bytes that will be sent, so review it
+    carefully. The general actuator behind the specific tools; prefer those. Refused unless Klipper
+    is ready. TWO-PHASE: without confirm=true this returns a preview and changes nothing; ask the
+    user, then call again with confirm=true."""
     try:
         script = script.strip()
         if not script:
@@ -203,8 +217,9 @@ async def send_gcode(script: str, confirm: bool = False) -> dict:
 @mcp.tool()
 async def firmware_restart(confirm: bool = False) -> dict:
     """FIRMWARE_RESTART: recover Klipper from a shutdown state (e.g. after power-cycling the printer).
-    Does NOT require Klipper to be ready (it is the fix for not-ready). TWO-PHASE: preview shows the
-    current state message; confirm=true acts."""
+    Does NOT require Klipper to be ready (it is the fix for not-ready). TWO-PHASE: without confirm=true
+    this returns a preview (the current state message) and changes nothing; ask the user, then call
+    again with confirm=true."""
     try:
         async with _client() as c:
             info = await c.printer_info()

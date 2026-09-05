@@ -62,11 +62,26 @@ async def test_pause_resume_cancel_confirm_paths(monkeypatch):
     _env(monkeypatch); _mock_reads()
     routes = {n: respx.post(f"{B}/printer/print/{n}").mock(return_value=httpx.Response(200, json={"result": "ok"}))
               for n in ("pause", "resume", "cancel")}
+
+    prev_pause = await srv.pause_print()
+    assert prev_pause["confirm_required"] and not any(r.called for r in routes.values())
+
+    prev_resume = await srv.resume_print()
+    assert prev_resume["confirm_required"] and not any(r.called for r in routes.values())
+
     prev = await srv.cancel_print()
     assert prev["confirm_required"] and prev["preview"]["filename"] == "a.gcode" and prev["preview"]["progress_percent"] == 40
+    assert not any(r.called for r in routes.values())
+
     assert (await srv.pause_print(confirm=True))["ok"] and routes["pause"].called
     assert (await srv.resume_print(confirm=True))["ok"] and routes["resume"].called
     assert (await srv.cancel_print(confirm=True))["ok"] and routes["cancel"].called
+
+
+@respx.mock
+async def test_emergency_stop_has_no_confirm_parameter(monkeypatch):
+    import inspect
+    assert "confirm" not in inspect.signature(srv.emergency_stop).parameters
 
 
 @respx.mock
@@ -83,6 +98,33 @@ async def test_tune_live_preview_lists_gcode_and_confirm_sends_each_line(monkeyp
 
 
 @respx.mock
+async def test_tune_live_reports_partial_progress_on_failure(monkeypatch):
+    _env(monkeypatch); _mock_reads()
+    first_line = "SET_PRESSURE_ADVANCE ADVANCE=0.04"
+    second_line = "M106 S128"
+    respx.post(url__regex=rf"{B}/printer/gcode/script.*").mock(side_effect=[
+        httpx.Response(200, json={"result": "ok"}),
+        httpx.Response(500, json={"error": {"code": 500, "message": "boom"}}),
+    ])
+    out = await srv.tune_live(pressure_advance=0.04, fan_percent=50, confirm=True)
+    assert out["sent"] == [first_line]
+    assert out["not_sent"] == [second_line]
+
+
+@respx.mock
+async def test_send_gcode_preview_sends_nothing(monkeypatch):
+    _env(monkeypatch); _mock_reads()
+    script = respx.post(url__regex=rf"{B}/printer/gcode/script.*").mock(return_value=httpx.Response(200, json={"result": "ok"}))
+    prev = await srv.send_gcode("M117 hi")
+    assert prev["confirm_required"] is True
+    assert prev["preview"]["gcode"] == "M117 hi"
+    assert not script.called
+    out = await srv.send_gcode("M117 hi", confirm=True)
+    assert out["ok"] is True
+    assert script.calls.last.request.url.params["script"] == "M117 hi"
+
+
+@respx.mock
 async def test_send_gcode_and_firmware_restart_and_emergency_stop(monkeypatch):
     _env(monkeypatch)
     respx.get(f"{B}/printer/info").mock(return_value=httpx.Response(200, json=SHUT))
@@ -94,6 +136,7 @@ async def test_send_gcode_and_firmware_restart_and_emergency_stop(monkeypatch):
     # firmware_restart is the fix for shutdown, so it must NOT require ready; still two-phase
     prev = await srv.firmware_restart()
     assert prev["confirm_required"] and "MCU" in prev["preview"]["klippy_message"]
+    assert not fr.called
     assert (await srv.firmware_restart(confirm=True))["ok"] and fr.called
     # emergency_stop acts immediately, no confirm parameter
     assert (await srv.emergency_stop())["ok"] and es.called
