@@ -19,3 +19,10 @@ secrets.*
 *.sqlite3
 *.db-wal
 *.db-shm
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+node_modules/
+._*
+*.safe-backup
