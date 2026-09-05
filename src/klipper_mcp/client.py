@@ -50,6 +50,8 @@ class MoonrakerClient:
 
     async def objects_query(self, objects: list[str]) -> dict:
         # Moonraker takes each object as a bare query key: ?extruder&heater_bed
+        # objects must be single bare tokens (e.g. "extruder", "heater_bed") -- no
+        # URL-encoding is applied here, so a name needing escaping would break the query.
         params = "&".join(objects)
         res = await self._request("GET", f"/printer/objects/query?{params}")
         return (res or {}).get("status", {})

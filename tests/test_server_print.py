@@ -26,10 +26,53 @@ async def test_start_print_local_file_previews_then_uploads_and_starts(monkeypat
     prev = await srv.start_print(str(p))
     assert prev["confirm_required"] and prev["preview"]["filename"] == "cube_PLA_20m.gcode"
     assert prev["preview"]["upload_needed"] is True and prev["preview"]["size_bytes"] == 4
+    assert prev["preview"]["overwrites_existing"] is False
     assert not up.called and not start.called
     out = await srv.start_print(str(p), confirm=True)
     assert out["ok"] and out["uploaded"] is True and up.called
+    assert out["overwrites_existing"] is False
     assert "filename=cube_PLA_20m.gcode" in str(start.calls.last.request.url)
+
+
+@respx.mock
+async def test_start_print_local_file_discloses_overwrite(monkeypatch, tmp_path):
+    _env(monkeypatch)
+    p = tmp_path / "onpi.gcode"; p.write_text("G28\n")
+    prev = await srv.start_print(str(p))
+    assert prev["preview"]["overwrites_existing"] is True
+
+
+@respx.mock
+async def test_start_print_local_non_gcode_suffix_is_refused(monkeypatch, tmp_path):
+    _env(monkeypatch)
+    up = respx.post(f"{B}/server/files/upload").mock(return_value=httpx.Response(201, json={"result": {}}))
+    p = tmp_path / "notes.txt"; p.write_text("hello\n")
+    out = await srv.start_print(str(p))
+    assert out["error"] == "not_gcode" and not up.called
+
+
+@respx.mock
+async def test_start_print_pi_subdirectory_file(monkeypatch):
+    _env(monkeypatch)
+    respx.get(url__regex=rf"{B}/server/files/list.*").mock(return_value=httpx.Response(
+        200, json={"result": [{"path": "sub/deep.gcode", "modified": 1.0, "size": 5}]}))
+    up = respx.post(f"{B}/server/files/upload").mock(return_value=httpx.Response(201, json={"result": {}}))
+    start = respx.post(url__regex=rf"{B}/printer/print/start.*").mock(return_value=httpx.Response(200, json={"result": "ok"}))
+    out = await srv.start_print("sub/deep.gcode", confirm=True)
+    assert out["ok"] and out["filename"] == "sub/deep.gcode" and not up.called
+    assert start.calls.last.request.url.params["filename"] == "sub/deep.gcode"
+
+
+@respx.mock
+async def test_start_print_reports_upload_succeeded_when_start_fails(monkeypatch, tmp_path):
+    _env(monkeypatch)
+    p = tmp_path / "cube_PLA_20m.gcode"; p.write_text("G28\n")
+    respx.post(f"{B}/server/files/upload").mock(return_value=httpx.Response(
+        201, json={"result": {"item": {"path": "cube_PLA_20m.gcode", "root": "gcodes"}}}))
+    respx.post(url__regex=rf"{B}/printer/print/start.*").mock(return_value=httpx.Response(
+        400, json={"error": {"message": "bad file"}}))
+    out = await srv.start_print(str(p), confirm=True)
+    assert out["uploaded"] is True and "error" in out and out["filename"] == "cube_PLA_20m.gcode"
 
 
 @respx.mock

@@ -82,14 +82,16 @@ async def list_gcode_files(limit: int = 50) -> dict:
         async with _client() as c:
             files = await c.files_list("gcodes")
         files = sorted(files, key=lambda f: f.get("modified", 0), reverse=True)
-        return {"count": len(files),
+        shown = files[:max(1, limit)]
+        return {"count": len(shown), "total": len(files),
                 "files": [{"path": f.get("path"), "size": f.get("size"), "modified": f.get("modified")}
-                          for f in files[:max(1, limit)]]}
+                          for f in shown]}
     except ApiError as e:
         return _err(e)
 
 
 _HEATERS = {"extruder": "extruder", "bed": "heater_bed", "heater_bed": "heater_bed"}
+_GCODE_SUFFIXES = {".gcode", ".gco", ".g", ".ufp"}
 
 
 async def _ready_and_status(c) -> tuple[dict, dict]:
@@ -249,34 +251,45 @@ async def emergency_stop() -> dict:
 @mcp.tool()
 async def start_print(path: str, confirm: bool = False) -> dict:
     """Start a print. path = a LOCAL gcode file on this server (e.g. one saved by orcaslicer-mcp's
-    save_gcode; it is uploaded to the printer under its basename) OR a bare filename already on the
-    printer (see list_gcode_files; no upload). TWO-PHASE: without confirm=true this returns a preview
-    and changes nothing; ask the user, then call again with confirm=true. Refused unless
-    Klipper is ready and idle."""
+    save_gcode; it is uploaded to the printer under its basename) OR a filename already staged on
+    the printer, including in a subdirectory (see list_gcode_files; no upload). A bare name that
+    also exists as a local file in this server's working directory is treated as local and
+    uploaded; the preview's upload_needed / overwrites_existing fields show which. TWO-PHASE:
+    without confirm=true this returns a preview and changes nothing; ask the user, then call
+    again with confirm=true. Refused unless Klipper is ready and idle."""
     try:
         local = Path(path)
         is_local = local.exists() and local.is_file()
         filename = local.name if is_local else Path(path).name
+        if is_local and local.suffix.lower() not in _GCODE_SUFFIXES:
+            return {"error": "not_gcode", "path": path}
         async with _client() as c:
             _, st = await _ready_and_status(c)
             if st["job"]["state"] in ("printing", "paused"):
                 return {"error": "printer_busy", "current": _job_preview(st)}
+            on_pi = {f.get("path") for f in await c.files_list("gcodes")}
             if not is_local:
-                if "/" in path:
-                    return {"error": "file_not_found", "path": path}
-                on_pi = {f.get("path") for f in await c.files_list("gcodes")}
-                if filename not in on_pi:
+                if path not in on_pi:
                     return {"error": "file_not_found", "path": path,
                             "hint": "not a local file and not on the printer; see list_gcode_files"}
+                filename = path
+            overwrites_existing = is_local and filename in on_pi
             preview = {"filename": filename, "upload_needed": is_local,
+                       "overwrites_existing": overwrites_existing,
                        "size_bytes": local.stat().st_size if is_local else None,
                        "klippy_state": st["klippy"]["state"], "job_state": st["job"]["state"]}
             if not confirm:
                 return gate.confirm_required("start_print", preview)
             if is_local:
                 await c.upload_gcode(str(local), filename)
-            await c.print_start(filename)
-        return {"ok": True, "action": "start_print", "filename": filename, "uploaded": is_local}
+                try:
+                    await c.print_start(filename)
+                except ApiError as e:
+                    return {"error": str(e), "uploaded": True, "filename": filename}
+            else:
+                await c.print_start(filename)
+        return {"ok": True, "action": "start_print", "filename": filename, "uploaded": is_local,
+                "overwrites_existing": overwrites_existing}
     except (PrinterNotReady, ApiError) as e:
         return _err(e)
 

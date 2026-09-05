@@ -2,13 +2,18 @@
 shared outcome store, and backfill from REST history on every (re)connect so nothing is
 missed while this service was down. Runs as the klipper-mcp-capture systemd service."""
 from __future__ import annotations
-import asyncio, json, logging, sys
+import asyncio, importlib.metadata, json, logging, sys
 import websockets
 from .client import MoonrakerClient
 from .config import load_config
 from . import outcomes
 
 log = logging.getLogger("klipper_mcp.capture")
+
+try:
+    _VERSION = importlib.metadata.version("klipper-mcp")
+except importlib.metadata.PackageNotFoundError:
+    _VERSION = "0.0.0"
 
 FINISHED_STATUSES = frozenset({"completed", "cancelled", "error", "klippy_shutdown",
                                "klippy_disconnect", "interrupted"})
@@ -61,6 +66,13 @@ async def backfill(client: MoonrakerClient, printer_id: str) -> int:
     return n
 
 
+def _should_warn(err: str, last_err: str | None) -> bool:
+    """True the first time a given error string is seen (or when it changes from the last
+    one); False for a repeat, so a persistent failure logs once at WARNING and then only at
+    DEBUG instead of flooding the log every retry."""
+    return err != last_err
+
+
 async def _after_disconnect(delay: float) -> float:
     """Sleep out the current backoff delay after a disconnect (clean or errored),
     then return the next (doubled, capped) delay. Isolated so it can be unit-tested
@@ -72,6 +84,7 @@ async def _after_disconnect(delay: float) -> float:
 async def run(stop: asyncio.Event | None = None) -> None:
     cfg = load_config()
     delay = 2.0
+    last_err: str | None = None
     while not (stop and stop.is_set()):
         try:
             async with MoonrakerClient(cfg) as c:
@@ -81,8 +94,9 @@ async def run(stop: asyncio.Event | None = None) -> None:
             log.info("connecting %s", url)
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                 delay = 2.0
+                last_err = None
                 await ws.send(json.dumps({"jsonrpc": "2.0", "method": "server.connection.identify",
-                                          "params": {"client_name": "klipper-mcp-capture", "version": "0.1.0",
+                                          "params": {"client_name": "klipper-mcp-capture", "version": _VERSION,
                                                      "type": "agent", "url": "https://github.com/MaxEllis/klipper-mcp"},
                                           "id": 1}))
                 async for raw in ws:
@@ -95,13 +109,19 @@ async def run(stop: asyncio.Event | None = None) -> None:
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - a daemon must survive anything and retry
-            log.warning("capture loop error: %s; retrying in %.0fs", e, delay)
+            err = str(e)
+            if _should_warn(err, last_err):
+                log.warning("capture loop error: %s; retrying in %.0fs", err, delay)
+            else:
+                log.debug("capture loop error (repeat): %s; retrying in %.0fs", err, delay)
+            last_err = err
             delay = await _after_disconnect(delay)
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stdout,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     asyncio.run(run())
 
 

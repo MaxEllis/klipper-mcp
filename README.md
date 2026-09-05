@@ -52,8 +52,9 @@ would send, and the printer's current relevant values. The tool must be called a
 `confirm=true` to actually act. This gate is enforced by the server itself, not by the MCP
 client, because these sessions run without a host permission prompt - see `src/klipper_mcp/gate.py`.
 
-- `set_temperature` - set an extruder or bed heater target. Hard ceilings: extruder 300C, bed
-  110C, taken from `printer.cfg`. Refused if Klipper is not in the `ready` state.
+- `set_temperature` - set an extruder or bed heater target. Hard ceilings: extruder 300C, which
+  is `printer.cfg`'s own `max_temp` for the extruder, and bed 110C, a deliberate margin below the
+  config's 130C bed `max_temp`. Refused if Klipper is not in the `ready` state.
 - `pause_print`, `resume_print`, `cancel_print` - job control. `cancel_print` is irreversible.
 - `tune_live` - adjust pressure advance (0..1), Z offset (-2..2 mm), flow percent (50..150),
   fan percent (0..100) on the running or next print. Ranges are enforced; each provided value
@@ -65,8 +66,10 @@ client, because these sessions run without a host permission prompt - see `src/k
   the other control tools, this one works even when Klipper is not ready (it is the fix for
   not-ready).
 - `start_print` - start a print. Takes either a local g-code file on this machine (uploaded to
-  the printer under its basename) or a filename already staged on the printer. Refused unless
-  Klipper is ready and idle.
+  the printer under its basename) or a filename already staged on the printer. A bare name that
+  also exists as a local file in this server's working directory is treated as local and
+  uploaded; the preview's `upload_needed` and `overwrites_existing` fields show which. Refused
+  unless Klipper is ready and idle.
 
 `emergency_stop` is the one exception: it acts immediately, with no preview and no `confirm`
 argument, because a confirmation round-trip would defeat the point of an emergency stop. It

@@ -45,6 +45,12 @@ def test_handle_message_odd_but_valid_json_does_not_raise(monkeypatch, tmp_path)
     assert oc.is_available() is False  # nothing was ever written
 
 
+def test_should_warn_dedupes_repeated_error():
+    assert capture._should_warn("boom", None) is True
+    assert capture._should_warn("boom", "boom") is False
+    assert capture._should_warn("bang", "boom") is True
+
+
 async def test_after_disconnect_doubles_and_caps(monkeypatch):
     calls = []
 

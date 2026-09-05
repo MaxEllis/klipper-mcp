@@ -66,4 +66,4 @@ async def test_list_gcode_files_sorted_newest_first(monkeypatch):
         "result": [{"path": "old.gcode", "modified": 1.0, "size": 10},
                    {"path": "new.gcode", "modified": 2.0, "size": 20}]}))
     out = await srv.list_gcode_files(limit=1)
-    assert out["count"] == 2 and [f["path"] for f in out["files"]] == ["new.gcode"]
+    assert out["count"] == 1 and out["total"] == 2 and [f["path"] for f in out["files"]] == ["new.gcode"]
