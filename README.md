@@ -118,11 +118,13 @@ sqlite3 ~/projects/_shared/print-outcomes/outcomes.db \
 
 ## Companion project
 
-[orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) slices models with OrcaSlicer. A
-planned `save_gcode` / `recall_prints` integration would let it write directly into the same
-outcome store and read past results back before slicing again, closing the loop between slicer
-and printer. That integration is a separate plan and is not built yet; today the two servers
-share only the SQLite schema that `klipper-mcp` owns.
+[orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) slices models with OrcaSlicer. Since
+orcaslicer-mcp 0.1.10 the two servers close the loop through this project's outcome store:
+`save_gcode` saves the sliced G-code and records the slice (model, geometry, full settings) under a
+filename; `start_print` here uploads that same file and starts it; the capture service writes the
+real result onto the same row when the job finishes; and `recall_prints` reads it back before the
+next slice of the same model. `klipper-mcp` owns the SQLite schema; orcaslicer-mcp carries a
+vendored copy of the store module.
 
 ## License
 
