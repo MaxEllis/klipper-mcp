@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- Requires the mcp SDK 2.x (`mcp>=2.2,<3`): `FastMCP` became `MCPServer`. The server now reports its own package version to clients.
 - The Moonraker client remembers which URL (mDNS name or fallback IP) last answered, process-wide, so every tool call no longer re-pays a dead mDNS lookup; the memory is dropped if that URL stops answering and both are retried.
 - Separate connect timeout (`MOONRAKER_CONNECT_TIMEOUT`, default 3s) so failover to the IP happens in seconds.
 - `start_print` reads the gcode file on a worker thread instead of blocking the event loop while httpx encodes the upload.

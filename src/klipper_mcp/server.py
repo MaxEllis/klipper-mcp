@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
-from mcp.server.fastmcp import FastMCP
+import importlib.metadata
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from .config import load_config
 from .client import MoonrakerClient
@@ -9,7 +10,12 @@ from . import gate
 from . import outcomes
 from .status import summarize_status, STATUS_OBJECTS
 
-mcp = FastMCP("klipper")
+try:
+    _VERSION = importlib.metadata.version("klipper-mcp")
+except importlib.metadata.PackageNotFoundError:
+    _VERSION = "0.0.0"
+
+mcp = MCPServer("klipper", version=_VERSION)
 
 RESULT_MAP = {"completed": "success", "cancelled": "cancelled"}  # everything else -> "error"
 
