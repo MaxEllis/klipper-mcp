@@ -67,3 +67,16 @@ async def test_list_gcode_files_sorted_newest_first(monkeypatch):
                    {"path": "new.gcode", "modified": 2.0, "size": 20}]}))
     out = await srv.list_gcode_files(limit=1)
     assert out["count"] == 1 and out["total"] == 2 and [f["path"] for f in out["files"]] == ["new.gcode"]
+
+
+@respx.mock
+async def test_list_print_history_clamps_limit_to_moonraker_range(monkeypatch):
+    _env(monkeypatch)
+    route = respx.get(url__regex=rf"{B}/server/history/list.*").mock(
+        return_value=httpx.Response(200, json={"result": {"count": 0, "jobs": []}}))
+    await srv.list_print_history(limit=500)
+    assert route.calls.last.request.url.params["limit"] == "100"
+    await srv.list_print_history(limit=0)
+    assert route.calls.last.request.url.params["limit"] == "1"
+    await srv.list_print_history(limit=-7)
+    assert route.calls.last.request.url.params["limit"] == "1"

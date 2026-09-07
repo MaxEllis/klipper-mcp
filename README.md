@@ -22,7 +22,9 @@ Environment variables, all optional (defaults shown):
 | Variable | Default | Purpose |
 |---|---|---|
 | `MOONRAKER_URL` | `http://klipper.local:7125` | Primary Moonraker endpoint. |
-| `MOONRAKER_FALLBACK_URL` | `http://192.168.1.128:7125` | Tried if the primary is unreachable (mDNS drops sometimes; the wired IP does not). |
+| `MOONRAKER_FALLBACK_URL` | `http://192.168.1.128:7125` | Tried if the primary is unreachable (mDNS drops sometimes; the wired IP does not). Whichever URL answers is remembered for the rest of the process, so later calls skip the dead one; if the remembered URL stops answering, both are tried again. |
+| `MOONRAKER_TIMEOUT` | `15` | Seconds allowed for a whole request (read/write phases). |
+| `MOONRAKER_CONNECT_TIMEOUT` | `3` | Seconds allowed to connect. Kept short so an mDNS name that no longer resolves fails over to the IP in seconds, not after the full request timeout. |
 | `PRINT_OUTCOMES_DIR` | `~/projects/_shared/print-outcomes` | Directory holding `outcomes.db`, the shared print-outcome store. |
 | `PRINTER_ID` | `swx2` | Tag written on every recorded row. Only matters once a second printer exists. |
 
@@ -90,6 +92,11 @@ shared SQLite store: job id, result, duration, filament grams, and whatever slic
 Moonraker's own g-code metadata carries. On every reconnect it also backfills from Moonraker's
 REST history for anything finished while the service was down, so a restart or network blip
 does not lose a job.
+
+The unit in `deploy/` runs sandboxed: read-only view of the system and home directory except
+the outcome store directory, private `/tmp`, no new privileges, no capabilities, and a
+`@system-service` syscall filter. If you point `PRINT_OUTCOMES_DIR` somewhere else, add that
+path to `ReadWritePaths=` too or the service will not be able to write the database.
 
 The store lives at `PRINT_OUTCOMES_DIR/outcomes.db` (default
 `~/projects/_shared/print-outcomes/outcomes.db`). `klipper-mcp` owns the schema; it is a plain

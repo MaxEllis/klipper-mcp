@@ -113,3 +113,23 @@ def test_set_verdict_targets_latest_printed_row_for_given_filename(monkeypatch, 
 def test_set_verdict_on_empty_store_returns_error(monkeypatch, tmp_path):
     _use_tmp(monkeypatch, tmp_path)
     assert oc.set_verdict("x") == {"error": "no_printed_job_found"}
+
+
+def test_verdicts_on_several_prints_are_kept_apart_and_recalled_together(monkeypatch, tmp_path):
+    _use_tmp(monkeypatch, tmp_path)
+    a = dict(JOB, job_id="0000A1", filename="bracket_PLA_1h.gcode", end_time=100.0)
+    b = dict(JOB, job_id="0000B2", filename="cube_PLA_20m.gcode", end_time=200.0)
+    c = dict(JOB, job_id="0000C3", filename="bracket_PLA_1h.gcode", end_time=300.0)
+    for j in (a, b, c):
+        oc.record_outcome(j)
+    # Latest print overall is c (bracket); latest cube is b.
+    assert oc.set_verdict("warped corner")["job_id"] == "0000C3"
+    assert oc.set_verdict("clean", "cube_PLA_20m.gcode")["job_id"] == "0000B2"
+    # A second verdict on the same print replaces, never appends.
+    again = oc.set_verdict("warped corner, lifted 2mm")
+    assert again["job_id"] == "0000C3" and again["human_verdict"] == "warped corner, lifted 2mm"
+    rows = {r["job_id"]: r["human_verdict"] for r in oc.recall(limit=10)}
+    assert rows == {"0000A1": None, "0000B2": "clean", "0000C3": "warped corner, lifted 2mm"}
+    # Recall by name surfaces both bracket prints, verdict and all, newest first.
+    brackets = oc.recall(model_name="bracket")
+    assert [r["job_id"] for r in brackets] == ["0000C3", "0000A1"]

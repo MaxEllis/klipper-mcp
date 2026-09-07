@@ -21,3 +21,11 @@ def test_env_overrides_and_trailing_slash(monkeypatch):
     assert c.fallback_url is None
     assert c.timeout == 3.0
     assert c.printer_id == "voron"
+
+
+def test_connect_timeout_default_is_short_and_overridable(monkeypatch):
+    # mDNS resolution failures should cost seconds, not the full request timeout.
+    monkeypatch.delenv("MOONRAKER_CONNECT_TIMEOUT", raising=False)
+    assert load_config().connect_timeout == 3.0
+    monkeypatch.setenv("MOONRAKER_CONNECT_TIMEOUT", "1.5")
+    assert load_config().connect_timeout == 1.5

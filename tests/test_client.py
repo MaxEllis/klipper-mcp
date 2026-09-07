@@ -98,3 +98,74 @@ async def test_unreachable_without_fallback_raises():
     async with MoonrakerClient(_cfg()) as c:
         with pytest.raises(NotReachable):
             await c.server_info()
+
+
+@respx.mock
+async def test_next_client_starts_on_the_url_that_last_answered():
+    primary = respx.get(f"{B}/server/info").mock(side_effect=httpx.ConnectError("dns"))
+    fb = respx.get(f"{FB}/server/info").mock(return_value=httpx.Response(200, json={"result": {"klippy_state": "ready"}}))
+    async with MoonrakerClient(_cfg(fallback=FB)) as c:
+        await c.server_info()
+    assert primary.call_count == 1 and fb.call_count == 1
+    # A brand-new client (every tool call builds one) must not re-pay the mDNS failure.
+    async with MoonrakerClient(_cfg(fallback=FB)) as c2:
+        assert c2.base_url == FB
+        await c2.server_info()
+    assert primary.call_count == 1 and fb.call_count == 2
+
+
+@respx.mock
+async def test_learned_url_is_forgotten_and_primary_retried_when_it_stops_answering():
+    respx.get(f"{B}/server/info").mock(side_effect=httpx.ConnectError("dns"))
+    respx.get(f"{FB}/server/info").mock(return_value=httpx.Response(200, json={"result": {"klippy_state": "ready"}}))
+    async with MoonrakerClient(_cfg(fallback=FB)) as c:
+        await c.server_info()
+    # Now the IP changes hands: the fallback dies and mDNS is back.
+    respx.get(f"{FB}/server/info").mock(side_effect=httpx.ConnectError("gone"))
+    prim = respx.get(f"{B}/server/info").mock(return_value=httpx.Response(200, json={"result": {"klippy_state": "ready"}}))
+    async with MoonrakerClient(_cfg(fallback=FB)) as c2:
+        assert c2.base_url == FB
+        assert (await c2.server_info())["klippy_state"] == "ready"
+        assert c2.base_url == B
+    assert prim.called
+    async with MoonrakerClient(_cfg(fallback=FB)) as c3:
+        assert c3.base_url == B
+
+
+@respx.mock
+async def test_both_urls_dead_raises_and_forgets():
+    from klipper_mcp import client as mod
+    respx.get(f"{B}/server/info").mock(side_effect=httpx.ConnectError("dns"))
+    respx.get(f"{FB}/server/info").mock(side_effect=httpx.ConnectError("down"))
+    async with MoonrakerClient(_cfg(fallback=FB)) as c:
+        with pytest.raises(NotReachable):
+            await c.server_info()
+    assert mod._LEARNED == {}
+
+
+def test_connect_timeout_is_applied_separately_from_read_timeout():
+    cfg = Config(base_url=B, fallback_url=None, timeout=15, printer_id="swx2", connect_timeout=2.5)
+    c = MoonrakerClient(cfg)
+    assert c._http.timeout.connect == 2.5 and c._http.timeout.read == 15
+
+
+@respx.mock
+async def test_upload_reads_the_file_off_the_event_loop(tmp_path, monkeypatch):
+    import asyncio
+    from klipper_mcp import client as mod
+    calls = []
+    real = asyncio.to_thread
+
+    async def spy(fn, *a, **kw):
+        calls.append(getattr(fn, "__name__", repr(fn)))
+        return await real(fn, *a, **kw)
+    monkeypatch.setattr(mod.asyncio, "to_thread", spy)
+    p = tmp_path / "big.gcode"
+    p.write_bytes(b"G1 X0\n" * 10_000)
+    route = respx.post(f"{B}/server/files/upload").mock(return_value=httpx.Response(
+        201, json={"result": {"item": {"path": "big.gcode", "root": "gcodes"}}}))
+    async with MoonrakerClient(_cfg()) as c:
+        out = await c.upload_gcode(str(p), "big.gcode")
+    assert out["item"]["path"] == "big.gcode"
+    assert calls, "file read must be handed to a worker thread, not done on the loop"
+    assert b"G1 X0\n" * 10_000 in route.calls.last.request.content

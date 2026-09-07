@@ -109,3 +109,22 @@ def test_record_verdict(monkeypatch, tmp_path):
     out = srv.record_verdict("warped at the corners")
     assert out["human_verdict"] == "warped at the corners" and out["gcode_filename"] == "a.gcode"
     assert srv.record_verdict("x", gcode_filename="nope.gcode")["error"] == "no_printed_job_found"
+
+
+PAUSED = {"result": {"status": {"webhooks": {"state": "ready"},
+                                "print_stats": {"state": "paused", "filename": "running.gcode"},
+                                "display_status": {"progress": 0.42}}}}
+
+
+@respx.mock
+async def test_start_print_refuses_while_paused(monkeypatch, tmp_path):
+    # A paused job still owns the printer: starting another would clobber it.
+    _env(monkeypatch)
+    respx.get(url__regex=rf"{B}/printer/objects/query.*").mock(return_value=httpx.Response(200, json=PAUSED))
+    start = respx.post(url__regex=rf"{B}/printer/print/start.*").mock(return_value=httpx.Response(200, json={"result": "ok"}))
+    p = tmp_path / "next.gcode"; p.write_text("G28\n")
+    for confirm in (False, True):
+        out = await srv.start_print(str(p), confirm=confirm)
+        assert out["error"] == "printer_busy"
+        assert out["current"] == {"filename": "running.gcode", "job_state": "paused", "progress_percent": 42}
+    assert not start.called
