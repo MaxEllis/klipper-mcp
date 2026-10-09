@@ -1,6 +1,8 @@
 import os
 from dataclasses import dataclass
 
+from .errors import NotConfigured
+
 
 @dataclass(frozen=True)
 class Config:
@@ -12,8 +14,13 @@ class Config:
 
 
 def load_config() -> Config:
-    base_url = os.environ.get("MOONRAKER_URL", "http://klipper.local:7125").rstrip("/")
-    fb = os.environ.get("MOONRAKER_FALLBACK_URL", "http://192.168.1.128:7125").strip().rstrip("/")
+    # No built-in printer address: a guessed default only turns "not configured" into a
+    # confusing "not reachable".
+    base_url = os.environ.get("MOONRAKER_URL", "").strip().rstrip("/")
+    if not base_url:
+        raise NotConfigured("MOONRAKER_URL is not set. Set it to your printer's Moonraker address, "
+                            "for example http://printer.local:7125")
+    fb = os.environ.get("MOONRAKER_FALLBACK_URL", "").strip().rstrip("/")
     timeout = float(os.environ.get("MOONRAKER_TIMEOUT", "15"))
     # Connect phase only: an mDNS name that no longer resolves should fail in seconds,
     # not sit out the full request timeout before the fallback IP is tried.

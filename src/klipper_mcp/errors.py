@@ -5,6 +5,10 @@ class ApiError(Exception):
     pass
 
 
+class NotConfigured(ApiError):
+    """A required setting (the printer's address) is missing."""
+
+
 class NotReachable(ApiError):
     pass
 

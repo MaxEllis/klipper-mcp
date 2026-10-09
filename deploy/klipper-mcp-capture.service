@@ -8,8 +8,8 @@ Type=simple
 User=max
 Group=max
 WorkingDirectory=/home/max/projects/klipper-mcp
-Environment=MOONRAKER_URL=http://klipper.local:7125
-Environment=MOONRAKER_FALLBACK_URL=http://192.168.1.128:7125
+# The printer's address is site-specific and is not set here. Add MOONRAKER_URL (and optionally
+# MOONRAKER_FALLBACK_URL) with `sudo systemctl edit klipper-mcp-capture`; see the README.
 Environment=PRINT_OUTCOMES_DIR=/home/max/projects/_shared/print-outcomes
 ExecStart=/home/max/projects/klipper-mcp/.venv/bin/klipper-mcp-capture
 Restart=always

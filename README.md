@@ -17,12 +17,12 @@ This creates `.venv/` with two entry points: `klipper-mcp` (the MCP server) and
 
 ## Configuration
 
-Environment variables, all optional (defaults shown):
+Environment variables. Only `MOONRAKER_URL` is required; the rest are optional (defaults shown):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MOONRAKER_URL` | `http://klipper.local:7125` | Primary Moonraker endpoint. |
-| `MOONRAKER_FALLBACK_URL` | `http://192.168.1.128:7125` | Tried if the primary is unreachable (mDNS drops sometimes; the wired IP does not). Whichever URL answers is remembered for the rest of the process, so later calls skip the dead one; if the remembered URL stops answering, both are tried again. |
+| `MOONRAKER_URL` | none, required | Your printer's Moonraker endpoint, for example `http://printer.local:7125`. Without it every tool returns an error that names this variable, and the capture service exits. |
+| `MOONRAKER_FALLBACK_URL` | none | A second address for the same printer, for example its fixed IP `http://192.0.2.10:7125`. Tried if the primary is unreachable (mDNS names drop sometimes; a fixed IP does not). Whichever URL answers is remembered for the rest of the process, so later calls skip the dead one; if the remembered URL stops answering, both are tried again. |
 | `MOONRAKER_TIMEOUT` | `15` | Seconds allowed for a whole request (read/write phases). |
 | `MOONRAKER_CONNECT_TIMEOUT` | `3` | Seconds allowed to connect. Kept short so an mDNS name that no longer resolves fails over to the IP in seconds, not after the full request timeout. |
 | `PRINT_OUTCOMES_DIR` | `~/projects/_shared/print-outcomes` if that folder already exists, else `~/.orcaslicer-mcp/outcomes` | Directory holding `outcomes.db`, the print-outcome store shared with orcaslicer-mcp. |
@@ -92,6 +92,24 @@ shared SQLite store: job id, result, duration, filament grams, and whatever slic
 Moonraker's own g-code metadata carries. On every reconnect it also backfills from Moonraker's
 REST history for anything finished while the service was down, so a restart or network blip
 does not lose a job.
+
+The unit file carries no printer address. Add yours with a drop-in before the first start (a
+drop-in survives reinstalling the unit file):
+
+```bash
+sudo systemctl edit klipper-mcp-capture
+```
+
+and put this in the editor it opens, with your own addresses in place of the examples:
+
+```ini
+[Service]
+Environment=MOONRAKER_URL=http://printer.local:7125
+Environment=MOONRAKER_FALLBACK_URL=http://192.0.2.10:7125
+```
+
+Without `MOONRAKER_URL` the service logs `MOONRAKER_URL is not set` and exits, and systemd keeps
+restarting it until the address is there.
 
 The unit in `deploy/` runs sandboxed: read-only view of the system and home directory except
 the outcome store directory, private `/tmp`, no new privileges, no capabilities, and a

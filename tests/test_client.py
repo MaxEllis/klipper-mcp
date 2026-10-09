@@ -8,15 +8,15 @@ FB = "http://fb:7125"
 
 
 def _cfg(fallback=None):
-    return Config(base_url=B, fallback_url=fallback, timeout=5, printer_id="swx2")
+    return Config(base_url=B, fallback_url=fallback, timeout=5, printer_id="test-printer")
 
 
-# Real shape captured from the Pi 2026-09-03 (trimmed).
+# Shape of a real Moonraker reply (trimmed); the values are invented.
 OBJECTS = {"result": {"eventtime": 1.0, "status": {
-    "extruder": {"temperature": 21.99, "target": 0.0, "pressure_advance": 0.032},
-    "heater_bed": {"temperature": 21.8, "target": 0.0},
-    "print_stats": {"filename": "Body4_PLA_22m1s.gcode", "state": "complete",
-                    "print_duration": 1345.7, "total_duration": 1475.09, "filament_used": 8311.97},
+    "extruder": {"temperature": 23.96, "target": 0.0, "pressure_advance": 0.045},
+    "heater_bed": {"temperature": 22.6, "target": 0.0},
+    "print_stats": {"filename": "bracket_PLA_25m.gcode", "state": "complete",
+                    "print_duration": 1400.0, "total_duration": 1500.0, "filament_used": 4100.0},
 }}}
 
 
@@ -26,7 +26,7 @@ async def test_objects_query_unwraps_status_and_sends_objects_as_params():
         return_value=httpx.Response(200, json=OBJECTS))
     async with MoonrakerClient(_cfg()) as c:
         st = await c.objects_query(["extruder", "print_stats"])
-    assert st["extruder"]["temperature"] == 21.99
+    assert st["extruder"]["temperature"] == 23.96
     assert st["print_stats"]["state"] == "complete"
     url = str(route.calls.last.request.url)
     assert "extruder" in url and "print_stats" in url
@@ -35,10 +35,10 @@ async def test_objects_query_unwraps_status_and_sends_objects_as_params():
 @respx.mock
 async def test_history_list_returns_jobs():
     respx.get(url__regex=rf"{B}/server/history/list.*").mock(return_value=httpx.Response(
-        200, json={"result": {"count": 1, "jobs": [{"job_id": "000092", "status": "completed"}]}}))
+        200, json={"result": {"count": 1, "jobs": [{"job_id": "00F0A2", "status": "completed"}]}}))
     async with MoonrakerClient(_cfg()) as c:
         jobs = await c.history_list(limit=5)
-    assert jobs[0]["job_id"] == "000092"
+    assert jobs[0]["job_id"] == "00F0A2"
 
 
 @respx.mock
@@ -144,7 +144,7 @@ async def test_both_urls_dead_raises_and_forgets():
 
 
 def test_connect_timeout_is_applied_separately_from_read_timeout():
-    cfg = Config(base_url=B, fallback_url=None, timeout=15, printer_id="swx2", connect_timeout=2.5)
+    cfg = Config(base_url=B, fallback_url=None, timeout=15, printer_id="test-printer", connect_timeout=2.5)
     c = MoonrakerClient(cfg)
     assert c._http.timeout.connect == 2.5 and c._http.timeout.read == 15
 

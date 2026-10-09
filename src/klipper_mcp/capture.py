@@ -6,6 +6,7 @@ import asyncio, importlib.metadata, json, logging, sys
 import websockets
 from .client import MoonrakerClient
 from .config import load_config
+from .errors import NotConfigured
 from . import outcomes
 
 log = logging.getLogger("klipper_mcp.capture")
@@ -122,7 +123,11 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stdout,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except NotConfigured as e:
+        log.error("%s", e)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

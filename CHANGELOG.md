@@ -11,6 +11,7 @@
 - Separate connect timeout (`MOONRAKER_CONNECT_TIMEOUT`, default 3s) so failover to the IP happens in seconds.
 - `start_print` reads the gcode file on a worker thread instead of blocking the event loop while httpx encodes the upload.
 - The capture systemd unit is sandboxed (ProtectSystem=strict, ProtectHome=read-only with the store directory writable, NoNewPrivileges, empty capability set, `@system-service` syscall filter).
+- `MOONRAKER_URL` is required. There is no built-in printer address and no default `MOONRAKER_FALLBACK_URL`. Without it every tool returns an error that names the variable, and the capture service logs it and exits. The unit in `deploy/` no longer carries an address: set it with a drop-in (see the README).
 ### Added
 - Read tools: get_printer_status, get_printer_info, list_print_history, list_gcode_files.
 - Two-phase gated control: set_temperature, pause/resume/cancel_print, tune_live, send_gcode, firmware_restart; emergency_stop acts immediately.
