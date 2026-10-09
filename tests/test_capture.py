@@ -170,6 +170,41 @@ async def test_a_job_that_cannot_be_recorded_is_warned_about_once_across_reconne
 
 
 @respx.mock
+async def test_backfill_skips_entries_that_are_not_job_objects(monkeypatch, tmp_path):
+    # the pre-checks used to call job.get on whatever the printer sent, so one odd entry stopped the catch-up
+    monkeypatch.setenv("PRINT_OUTCOMES_DIR", str(tmp_path))
+    _history([{**JOB, "job_id": "00F0A3", "end_time": 300.0}, "not an object", None, ["a", "list"], 7,
+              {**JOB, "job_id": "00F0A1", "end_time": 100.0}])
+    async with MoonrakerClient(Config(B, None, 5, "test-printer")) as c:
+        n = await capture.backfill(c, "test-printer")
+    assert n == 2 and sorted(r["job_id"] for r in oc.recall(limit=10)) == ["00F0A1", "00F0A3"]
+
+
+@respx.mock
+async def test_backfill_skips_an_end_time_too_large_to_read_as_a_number(monkeypatch, tmp_path):
+    # a JSON integer beyond float range makes float() raise OverflowError, which is neither a TypeError nor a ValueError
+    monkeypatch.setenv("PRINT_OUTCOMES_DIR", str(tmp_path))
+    _history([{**JOB, "job_id": "00F0A3", "end_time": 10 ** 400}, {**JOB, "job_id": "00F0A2", "end_time": 200.0}])
+    async with MoonrakerClient(Config(B, None, 5, "test-printer")) as c:
+        n = await capture.backfill(c, "test-printer")
+    assert n == 1 and [r["job_id"] for r in oc.recall(limit=10)] == ["00F0A2"]
+
+
+@respx.mock
+async def test_backfill_leaves_out_a_finished_job_without_a_job_id_instead_of_inserting_it_every_time(monkeypatch, tmp_path):
+    # record_outcome dedupes on job_id, so an entry without one would be inserted again on every reconnect
+    monkeypatch.setenv("PRINT_OUTCOMES_DIR", str(tmp_path))
+    no_id = {k: v for k, v in JOB.items() if k != "job_id"}
+    _history([{**no_id, "end_time": 300.0}, {**JOB, "job_id": None, "end_time": 250.0},
+              {**JOB, "job_id": "", "end_time": 220.0}, {**JOB, "job_id": "00F0A1", "end_time": 100.0}])
+    async with MoonrakerClient(Config(B, None, 5, "test-printer")) as c:
+        first = await capture.backfill(c, "test-printer")
+        second = await capture.backfill(c, "test-printer")  # the next (re)connect
+    assert first == second == 1
+    assert [r["job_id"] for r in oc.recall(limit=10)] == ["00F0A1"]
+
+
+@respx.mock
 async def test_backfill_still_raises_when_the_store_is_locked_or_unwritable(monkeypatch, tmp_path):
     # a store problem would hit every job, and the run loop's retry is the right response to it
     monkeypatch.setenv("PRINT_OUTCOMES_DIR", str(tmp_path))

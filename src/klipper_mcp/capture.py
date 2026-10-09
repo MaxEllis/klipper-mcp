@@ -58,15 +58,20 @@ async def backfill(client: MoonrakerClient, printer_id: str) -> int:
     fills gaps, so checking them all is safe. A job that cannot be recorded (odd metadata, say) is
     skipped with one warning, so one bad job never stops the catch-up (which runs before the websocket
     opens, so it would stop live recording on every reconnect); a locked or unwritable store still
-    raises. Returns how many finished jobs it recorded or confirmed."""
+    raises. An entry that is not a job object, has no job_id or has an unreadable end time is skipped
+    without a warning. Returns how many finished jobs it recorded or confirmed."""
     jobs = await client.history_list(limit=BACKFILL_LIMIT)
     checked = 0
     for job in reversed(jobs):  # Moonraker answers newest first; the jobs finished oldest first
+        # Not a job object, or no id: skip it. record_outcome dedupes on job_id, so an entry without
+        # one would be inserted again on every reconnect.
+        if not isinstance(job, dict) or not job.get("job_id"):
+            continue
         if job.get("status") not in FINISHED_STATUSES:
             continue
         try:
             end = float(job.get("end_time") or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):  # OverflowError: a JSON integer beyond float range
             continue
         if end <= 0:
             continue

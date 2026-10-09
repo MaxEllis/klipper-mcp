@@ -16,6 +16,7 @@
 - `PRINTER_ID` defaults to the host name in `MOONRAKER_URL`, the same rule orcaslicer-mcp uses, instead of a fixed tag. Set it explicitly to keep the tag an existing store already uses. The re-copied store module gives a new store's `printer_id` column the default `unknown`.
 - The capture service's catch-up on every (re)connect now records every finished job among Moonraker's latest 100, oldest first, and logs how many it checked. It used to start from the newest stored print, which skipped an older job it had missed whenever orcaslicer-mcp's `list_print_history` had already stored a newer one. A job that is already stored is not changed, apart from filling in blank estimate fields.
 - The capture service's catch-up skips a job it can't record (odd metadata from the printer, say) and logs one warning naming it, instead of stopping. Before, one bad job in the history kept the recorder from ever opening its live connection. A database that is locked or can't be opened still stops the catch-up, and the service retries as before.
+- The capture service's catch-up also skips a history entry that isn't a job object or whose end time is too large to read, instead of stopping. An entry with no job id is skipped too: it used to be stored again on every reconnect.
 - The re-copied store module closes its database connection when it can't set up or upgrade the store (a locked or damaged file), so the recorder's retries no longer leave connections open.
 ### Added
 - Read tools: get_printer_status, get_printer_info, list_print_history, list_gcode_files.
