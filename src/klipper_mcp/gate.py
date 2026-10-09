@@ -1,13 +1,13 @@
 """Server-enforced two-phase confirmation and hard bounds for every control tool.
 
-Why server-side: homeserver Claude sessions run with bypassPermissions, so MCP destructive
-annotations never produce a host prompt here. Rule 3 (confirm every destructive op, no batching)
-is therefore enforced HERE: without confirm=True a control tool returns a preview and does nothing.
+Why server-side: an MCP client can run with permission prompts turned off, and then the destructive
+tool annotations never reach a person. So the confirmation is enforced HERE: without confirm=True a
+control tool returns a preview and does nothing. One action per confirmation, no batching.
 """
 from __future__ import annotations
 from .errors import Refused, PrinterNotReady
 
-# Ceilings from printer.cfg (extruder max_temp 300) and sane bed/PA/offset/flow/fan ranges.
+# Fixed ceilings and sane PA/offset/flow/fan ranges. Klipper's own max_temp still applies on top.
 LIMITS = {"extruder_c": (0, 300), "bed_c": (0, 110), "pressure_advance": (0.0, 1.0),
           "z_offset": (-2.0, 2.0), "flow_percent": (50, 150), "fan_percent": (0, 100)}
 

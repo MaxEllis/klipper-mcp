@@ -18,7 +18,7 @@ def test_defaults(monkeypatch):
     assert c.base_url == "http://printer.local:7125"
     assert c.fallback_url is None  # no built-in second address
     assert c.timeout == 15.0
-    assert c.printer_id == "swx2"
+    assert c.printer_id == "printer.local"  # the host name in MOONRAKER_URL
 
 
 @pytest.mark.parametrize("value", [None, "", "   "])
@@ -42,6 +42,8 @@ def test_env_overrides_and_trailing_slash(monkeypatch):
     assert c.printer_id == "voron"
     monkeypatch.setenv("MOONRAKER_FALLBACK_URL", "")
     assert load_config().fallback_url is None
+    monkeypatch.setenv("PRINTER_ID", "  ")
+    assert load_config().printer_id == "x"  # blank falls back to the host
 
 
 def test_connect_timeout_default_is_short_and_overridable(monkeypatch):

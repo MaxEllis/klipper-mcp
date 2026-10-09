@@ -5,13 +5,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=max
-Group=max
-WorkingDirectory=/home/max/projects/klipper-mcp
-# The printer's address is site-specific and is not set here. Add MOONRAKER_URL (and optionally
-# MOONRAKER_FALLBACK_URL) with `sudo systemctl edit klipper-mcp-capture`; see the README.
-Environment=PRINT_OUTCOMES_DIR=/home/max/projects/_shared/print-outcomes
-ExecStart=/home/max/projects/klipper-mcp/.venv/bin/klipper-mcp-capture
+# Placeholders. Set your own user, paths and the printer's address in a drop-in
+# (`sudo systemctl edit klipper-mcp-capture`), as shown under "The capture service" in the README.
+User=youruser
+Group=youruser
+WorkingDirectory=/home/youruser/klipper-mcp
+Environment=PRINT_OUTCOMES_DIR=/home/youruser/.orcaslicer-mcp/outcomes
+ExecStart=/home/youruser/klipper-mcp/.venv/bin/klipper-mcp-capture
 Restart=always
 RestartSec=10
 MemoryMax=200M
@@ -22,7 +22,7 @@ CPUQuota=20%
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/max/projects/_shared/print-outcomes
+ReadWritePaths=/home/youruser/.orcaslicer-mcp/outcomes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes

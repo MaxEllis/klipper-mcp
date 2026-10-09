@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from .errors import NotConfigured
 
@@ -25,6 +26,7 @@ def load_config() -> Config:
     # Connect phase only: an mDNS name that no longer resolves should fail in seconds,
     # not sit out the full request timeout before the fallback IP is tried.
     connect_timeout = float(os.environ.get("MOONRAKER_CONNECT_TIMEOUT", "3"))
-    printer_id = os.environ.get("PRINTER_ID", "swx2").strip() or "swx2"
+    # Same rule as orcaslicer-mcp: an explicit PRINTER_ID, else the printer's host name.
+    printer_id = os.environ.get("PRINTER_ID", "").strip() or urlsplit(base_url).hostname or "unknown"
     return Config(base_url=base_url, fallback_url=fb or None, timeout=timeout, connect_timeout=connect_timeout,
                   printer_id=printer_id)

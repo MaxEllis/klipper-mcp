@@ -26,7 +26,7 @@ Environment variables. Only `MOONRAKER_URL` is required; the rest are optional (
 | `MOONRAKER_TIMEOUT` | `15` | Seconds allowed for a whole request (read/write phases). |
 | `MOONRAKER_CONNECT_TIMEOUT` | `3` | Seconds allowed to connect. Kept short so an mDNS name that no longer resolves fails over to the IP in seconds, not after the full request timeout. |
 | `PRINT_OUTCOMES_DIR` | `~/projects/_shared/print-outcomes` if that folder already exists, else `~/.orcaslicer-mcp/outcomes` | Directory holding `outcomes.db`, the print-outcome store shared with orcaslicer-mcp. |
-| `PRINTER_ID` | `swx2` | Tag written on every recorded row. Only matters once a second printer exists. |
+| `PRINTER_ID` | the host name in `MOONRAKER_URL` | Tag written on every recorded row. Only matters once a second printer exists. orcaslicer-mcp uses the same rule for its printer address, so both tag a print alike when they point at the same host. |
 
 There is one printer behind this server. If you have more than one, run a separate instance
 per printer with its own `MOONRAKER_URL` and `PRINTER_ID`.
@@ -52,11 +52,11 @@ Every control tool except `emergency_stop` takes a `confirm` argument. Called wi
 `confirm=true` it changes nothing and returns a preview: the exact action, the exact g-code it
 would send, and the printer's current relevant values. The tool must be called again with
 `confirm=true` to actually act. This gate is enforced by the server itself, not by the MCP
-client, because these sessions run without a host permission prompt - see `src/klipper_mcp/gate.py`.
+client, because a client can run with permission prompts turned off - see `src/klipper_mcp/gate.py`.
 
-- `set_temperature` - set an extruder or bed heater target. Hard ceilings: extruder 300C, which
-  is `printer.cfg`'s own `max_temp` for the extruder, and bed 110C, a deliberate margin below the
-  config's 130C bed `max_temp`. Refused if Klipper is not in the `ready` state.
+- `set_temperature` - set an extruder or bed heater target. Fixed ceilings: extruder 300C, bed
+  110C. Klipper still refuses anything above the `max_temp` in your `printer.cfg`. Refused if
+  Klipper is not in the `ready` state.
 - `pause_print`, `resume_print`, `cancel_print` - job control. `cancel_print` is irreversible.
 - `tune_live` - adjust pressure advance (0..1), Z offset (-2..2 mm), flow percent (50..150),
   fan percent (0..100) on the running or next print. Ranges are enforced; each provided value
@@ -85,36 +85,52 @@ halts the printer at once (heaters and motors off); recover with `firmware_resta
 
 ## The capture service
 
-`klipper-mcp-capture` is meant to run always-on (a systemd unit is in `deploy/`, currently
-installed as `klipper-mcp-capture.service`). It holds a Moonraker websocket connection and, for
+`klipper-mcp-capture` is meant to run always-on, from the systemd unit in `deploy/`. It holds a
+Moonraker websocket connection and, for
 every print that finishes (completed, cancelled, or otherwise ended), records a row in the
 shared SQLite store: job id, result, duration, filament grams, and whatever slicer settings
 Moonraker's own g-code metadata carries. On every reconnect it also backfills from Moonraker's
 REST history for anything finished while the service was down, so a restart or network blip
 does not lose a job.
 
-The unit file carries no printer address. Add yours with a drop-in before the first start (a
-drop-in survives reinstalling the unit file):
+The unit file uses placeholders (`youruser`) for everything that differs between machines and
+carries no printer address. Install it, then put your own values in a drop-in, which survives
+reinstalling the unit file:
 
 ```bash
+sudo cp deploy/klipper-mcp-capture.service /etc/systemd/system/
 sudo systemctl edit klipper-mcp-capture
 ```
 
-and put this in the editor it opens, with your own addresses in place of the examples:
+In the editor that opens, add your user, paths and printer address. The values below are
+examples:
 
 ```ini
 [Service]
+User=alice
+Group=alice
+WorkingDirectory=/home/alice/klipper-mcp
+ExecStart=
+ExecStart=/home/alice/klipper-mcp/.venv/bin/klipper-mcp-capture
+Environment=
 Environment=MOONRAKER_URL=http://printer.local:7125
 Environment=MOONRAKER_FALLBACK_URL=http://192.0.2.10:7125
+Environment=PRINT_OUTCOMES_DIR=/home/alice/.orcaslicer-mcp/outcomes
+ReadWritePaths=
+ReadWritePaths=/home/alice/.orcaslicer-mcp/outcomes
 ```
+
+The empty `ExecStart=`, `Environment=` and `ReadWritePaths=` lines clear the placeholder values.
+Without them systemd adds to those settings instead of replacing them. Create the store folder
+before the first start, then run `sudo systemctl enable --now klipper-mcp-capture`.
 
 Without `MOONRAKER_URL` the service logs `MOONRAKER_URL is not set` and exits, and systemd keeps
 restarting it until the address is there.
 
-The unit in `deploy/` runs sandboxed: read-only view of the system and home directory except
-the outcome store directory, private `/tmp`, no new privileges, no capabilities, and a
-`@system-service` syscall filter. If you point `PRINT_OUTCOMES_DIR` somewhere else, add that
-path to `ReadWritePaths=` too or the service will not be able to write the database.
+The unit runs sandboxed: read-only view of the system and home directory except the outcome
+store folder, private `/tmp`, no new privileges, no capabilities, and a `@system-service`
+syscall filter. The service can only write to the folder in `ReadWritePaths=`, and that folder
+must exist before it starts. If you move `PRINT_OUTCOMES_DIR`, move `ReadWritePaths=` with it.
 
 The store is `outcomes.db` in `PRINT_OUTCOMES_DIR`. Without that variable it is in
 `~/projects/_shared/print-outcomes` if that folder already exists, else in
@@ -133,9 +149,9 @@ sqlite3 ~/projects/_shared/print-outcomes/outcomes.db \
 
 - Every control tool but `emergency_stop` is two-phase: the first call previews, the second
   (with `confirm=true`) acts. This is enforced in the server, not left to the MCP client, because
-  these sessions typically run without a permission prompt.
-- `set_temperature` and `tune_live` enforce hard numeric ceilings taken from the printer's own
-  config; out-of-range values are refused before anything is sent.
+  a client can run with permission prompts turned off.
+- `set_temperature` and `tune_live` enforce fixed numeric ranges; out-of-range values are
+  refused before anything is sent.
 - Most control tools require Klipper to be in the `ready` state first; `firmware_restart` is the
   deliberate exception, since it exists to recover from not-ready.
 - `emergency_stop` is immediate by design: no preview, no confirm, because a delay would defeat
