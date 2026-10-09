@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- `httpx` is now capped below 1.0. Its 1.0 pre-releases have no `AsyncClient`, so an install that resolved one (for example with pre-releases allowed) failed on the first printer call; the cap keeps a future 1.0 release from doing the same to fresh installs.
 - `src/klipper_mcp/outcomes.py` is re-copied from orcaslicer-mcp, which now owns the outcome-store schema. Schema v2 adds the `failure_reason`, `est_time_s` and `est_filament_g` columns; they are added on the first write, and older readers keep working.
 - The default store location is `PRINT_OUTCOMES_DIR`, else `~/projects/_shared/print-outcomes` if that folder already exists, else `~/.orcaslicer-mcp/outcomes`. The unit in `deploy/` sets `PRINT_OUTCOMES_DIR` explicitly.
 - A finished job only joins a slice that was saved no later than the job started, with a 120 second allowance for clock differences between the machines.
