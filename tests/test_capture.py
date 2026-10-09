@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import httpx, pytest, respx
 from klipper_mcp import capture, outcomes as oc
 from klipper_mcp.client import MoonrakerClient
@@ -132,6 +133,59 @@ async def test_backfill_walks_oldest_first_so_the_earlier_reprint_claims_the_sli
     async with MoonrakerClient(Config(B, None, 5, "test-printer")) as c:
         await capture.backfill(c, "test-printer")
     assert oc.get(slice_id)["job_id"] == "00F0A2"
+
+
+BAD_JOB = {**JOB, "job_id": "00F0A2", "end_time": 200.0, "metadata": "not an object"}  # record_outcome raises on it
+
+
+@respx.mock
+async def test_backfill_goes_on_past_a_job_that_cannot_be_recorded(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("PRINT_OUTCOMES_DIR", str(tmp_path))
+    monkeypatch.setattr(capture, "_WARNED_JOBS", set())
+    with pytest.raises(AttributeError):  # the premise: this job really makes record_outcome raise
+        oc.record_outcome(BAD_JOB)
+    _history([{**JOB, "job_id": "00F0A3", "end_time": 300.0}, BAD_JOB, {**JOB, "job_id": "00F0A1", "end_time": 100.0}])
+    with caplog.at_level("INFO", logger="klipper_mcp.capture"):
+        async with MoonrakerClient(Config(B, None, 5, "test-printer")) as c:
+            n = await capture.backfill(c, "test-printer")
+    assert sorted(r["job_id"] for r in oc.recall(limit=10)) == ["00F0A1", "00F0A3"]  # both neighbours recorded
+    assert n == 2  # the two it could record
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1 and "00F0A2" in warnings[0]
+    assert "checked 2 finished job(s)" in caplog.text
+
+
+@respx.mock
+async def test_a_job_that_cannot_be_recorded_is_warned_about_once_across_reconnects(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("PRINT_OUTCOMES_DIR", str(tmp_path))
+    monkeypatch.setattr(capture, "_WARNED_JOBS", set())
+    _history([BAD_JOB, {**JOB, "job_id": "00F0A1", "end_time": 100.0}])
+    with caplog.at_level("DEBUG", logger="klipper_mcp.capture"):
+        async with MoonrakerClient(Config(B, None, 5, "test-printer")) as c:
+            await capture.backfill(c, "test-printer")
+            await capture.backfill(c, "test-printer")  # the next (re)connect
+    warnings = [r for r in caplog.records if r.levelname == "WARNING" and "00F0A2" in r.getMessage()]
+    assert len(warnings) == 1
+    assert any(r.levelname == "DEBUG" and "00F0A2" in r.getMessage() for r in caplog.records)  # still traceable
+
+
+@respx.mock
+async def test_backfill_still_raises_when_the_store_is_locked_or_unwritable(monkeypatch, tmp_path):
+    # a store problem would hit every job, and the run loop's retry is the right response to it
+    monkeypatch.setenv("PRINT_OUTCOMES_DIR", str(tmp_path))
+    monkeypatch.setattr(capture, "_WARNED_JOBS", set())
+    seen = []
+
+    def locked(job, printer_id):
+        seen.append(job["job_id"])
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(capture.outcomes, "record_outcome", locked)
+    _history([{**JOB, "job_id": "00F0A2", "end_time": 200.0}, {**JOB, "job_id": "00F0A1", "end_time": 100.0}])
+    async with MoonrakerClient(Config(B, None, 5, "test-printer")) as c:
+        with pytest.raises(sqlite3.OperationalError):
+            await capture.backfill(c, "test-printer")
+    assert seen == ["00F0A1"]  # it stopped at the first job: no point asking the locked store again
 
 
 def test_main_exits_with_a_clear_message_when_unconfigured(monkeypatch, caplog):

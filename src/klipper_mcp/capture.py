@@ -2,7 +2,7 @@
 shared outcome store, and backfill from REST history on every (re)connect so nothing is
 missed while this service was down. Runs as the klipper-mcp-capture systemd service."""
 from __future__ import annotations
-import asyncio, importlib.metadata, json, logging, sys
+import asyncio, importlib.metadata, json, logging, sqlite3, sys
 import websockets
 from .client import MoonrakerClient
 from .config import load_config
@@ -48,13 +48,17 @@ def handle_message(raw: str, printer_id: str) -> int | None:
 
 
 BACKFILL_LIMIT = 100
+_WARNED_JOBS: set[str] = set()  # jobs already reported as unrecordable: a reconnect must not repeat the warning
 
 
 async def backfill(client: MoonrakerClient, printer_id: str) -> int:
     """Record every finished job among Moonraker's latest BACKFILL_LIMIT. Catching up from the newest
     stored job would skip an older one the recorder missed whenever something else (orcaslicer-mcp's
     list_print_history) had already stored a newer one; record_outcome is idempotent on job_id and only
-    fills gaps, so checking them all is safe. Returns how many finished jobs it checked."""
+    fills gaps, so checking them all is safe. A job that cannot be recorded (odd metadata, say) is
+    skipped with one warning, so one bad job never stops the catch-up (which runs before the websocket
+    opens, so it would stop live recording on every reconnect); a locked or unwritable store still
+    raises. Returns how many finished jobs it recorded or confirmed."""
     jobs = await client.history_list(limit=BACKFILL_LIMIT)
     checked = 0
     for job in reversed(jobs):  # Moonraker answers newest first; the jobs finished oldest first
@@ -66,7 +70,16 @@ async def backfill(client: MoonrakerClient, printer_id: str) -> int:
             continue
         if end <= 0:
             continue
-        outcomes.record_outcome(job, printer_id)
+        try:
+            outcomes.record_outcome(job, printer_id)
+        except sqlite3.OperationalError:
+            raise  # locked or unwritable store: every job would fail, so let the run loop retry
+        except Exception as e:  # noqa: BLE001 - one bad job must not abort the catch-up
+            key = str(job.get("job_id"))
+            level = logging.DEBUG if key in _WARNED_JOBS else logging.WARNING
+            _WARNED_JOBS.add(key)
+            log.log(level, "backfill skipped job %s: it could not be recorded (%s: %s)", key, type(e).__name__, e)
+            continue
         checked += 1
     log.info("backfill checked %d finished job(s) among the latest %d in history", checked, len(jobs))
     return checked
