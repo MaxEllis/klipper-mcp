@@ -25,7 +25,7 @@ Environment variables, all optional (defaults shown):
 | `MOONRAKER_FALLBACK_URL` | `http://192.168.1.128:7125` | Tried if the primary is unreachable (mDNS drops sometimes; the wired IP does not). Whichever URL answers is remembered for the rest of the process, so later calls skip the dead one; if the remembered URL stops answering, both are tried again. |
 | `MOONRAKER_TIMEOUT` | `15` | Seconds allowed for a whole request (read/write phases). |
 | `MOONRAKER_CONNECT_TIMEOUT` | `3` | Seconds allowed to connect. Kept short so an mDNS name that no longer resolves fails over to the IP in seconds, not after the full request timeout. |
-| `PRINT_OUTCOMES_DIR` | `~/projects/_shared/print-outcomes` | Directory holding `outcomes.db`, the shared print-outcome store. |
+| `PRINT_OUTCOMES_DIR` | `~/projects/_shared/print-outcomes` if that folder already exists, else `~/.orcaslicer-mcp/outcomes` | Directory holding `outcomes.db`, the print-outcome store shared with orcaslicer-mcp. |
 | `PRINTER_ID` | `swx2` | Tag written on every recorded row. Only matters once a second printer exists. |
 
 There is one printer behind this server. If you have more than one, run a separate instance
@@ -98,9 +98,11 @@ the outcome store directory, private `/tmp`, no new privileges, no capabilities,
 `@system-service` syscall filter. If you point `PRINT_OUTCOMES_DIR` somewhere else, add that
 path to `ReadWritePaths=` too or the service will not be able to write the database.
 
-The store lives at `PRINT_OUTCOMES_DIR/outcomes.db` (default
-`~/projects/_shared/print-outcomes/outcomes.db`). `klipper-mcp` owns the schema; it is a plain
-SQLite file, safe to read from outside this project.
+The store is `outcomes.db` in `PRINT_OUTCOMES_DIR`. Without that variable it is in
+`~/projects/_shared/print-outcomes` if that folder already exists, else in
+`~/.orcaslicer-mcp/outcomes`. orcaslicer-mcp owns the schema: `src/klipper_mcp/outcomes.py` is a
+vendored copy of its store module (do not edit it here, re-copy it from orcaslicer-mcp). The store
+is a plain SQLite file, safe to read from outside this project.
 
 Inspect the last 10 recorded prints:
 
@@ -126,12 +128,12 @@ sqlite3 ~/projects/_shared/print-outcomes/outcomes.db \
 ## Companion project
 
 [orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) slices models with OrcaSlicer. Since
-orcaslicer-mcp 0.1.10 the two servers close the loop through this project's outcome store:
+orcaslicer-mcp 0.1.10 the two servers close the loop through a shared outcome store:
 `save_gcode` saves the sliced G-code and records the slice (model, geometry, full settings) under a
 filename; `start_print` here uploads that same file and starts it; the capture service writes the
 real result onto the same row when the job finishes; and `recall_prints` reads it back before the
-next slice of the same model. `klipper-mcp` owns the SQLite schema; orcaslicer-mcp carries a
-vendored copy of the store module.
+next slice of the same model. orcaslicer-mcp owns the SQLite schema; this project carries a
+vendored copy of its store module.
 
 ## License
 

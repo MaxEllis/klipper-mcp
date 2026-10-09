@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 ### Changed
+- `src/klipper_mcp/outcomes.py` is re-copied from orcaslicer-mcp, which now owns the outcome-store schema. Schema v2 adds the `failure_reason`, `est_time_s` and `est_filament_g` columns; they are added on the first write, and older readers keep working.
+- The default store location is `PRINT_OUTCOMES_DIR`, else `~/projects/_shared/print-outcomes` if that folder already exists, else `~/.orcaslicer-mcp/outcomes`. The unit in `deploy/` sets `PRINT_OUTCOMES_DIR` itself, so the recorder stays where it was.
+- A finished job only joins a slice that was saved no later than the job started, with a 120 second allowance for clock differences between the machines.
+- The store module's default `printer_id` is `unknown` when a caller passes none. The recorder always passes its configured `PRINTER_ID`.
 - Requires the mcp SDK 2.x (`mcp>=2.2,<3`): `FastMCP` became `MCPServer`. The server now reports its own package version to clients.
 - The Moonraker client remembers which URL (mDNS name or fallback IP) last answered, process-wide, so every tool call no longer re-pays a dead mDNS lookup; the memory is dropped if that URL stops answering and both are retried.
 - Separate connect timeout (`MOONRAKER_CONNECT_TIMEOUT`, default 3s) so failover to the IP happens in seconds.
