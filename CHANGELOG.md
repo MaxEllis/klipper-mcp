@@ -12,7 +12,7 @@
 - `start_print` reads the gcode file on a worker thread instead of blocking the event loop while httpx encodes the upload.
 - The capture systemd unit is sandboxed (ProtectSystem=strict, ProtectHome=read-only with the store directory writable, NoNewPrivileges, empty capability set, `@system-service` syscall filter).
 - `MOONRAKER_URL` is required. There is no built-in printer address and no default `MOONRAKER_FALLBACK_URL`. Without it every tool returns an error that names the variable, and the capture service logs it and exits. The unit in `deploy/` is now a template with placeholders and no address: put your user, paths and printer address in a drop-in (see the README).
-- `PRINTER_ID` defaults to the host name in `MOONRAKER_URL`, the same rule orcaslicer-mcp uses, instead of a fixed tag. Set it explicitly to keep the tag an existing store already uses.
+- `PRINTER_ID` defaults to the host name in `MOONRAKER_URL`, the same rule orcaslicer-mcp uses, instead of a fixed tag. Set it explicitly to keep the tag an existing store already uses. The re-copied store module gives a new store's `printer_id` column the default `unknown`.
 ### Added
 - Read tools: get_printer_status, get_printer_info, list_print_history, list_gcode_files.
 - Two-phase gated control: set_temperature, pause/resume/cancel_print, tune_live, send_gcode, firmware_restart; emergency_stop acts immediately.
