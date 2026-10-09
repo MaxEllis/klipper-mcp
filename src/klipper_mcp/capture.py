@@ -47,24 +47,29 @@ def handle_message(raw: str, printer_id: str) -> int | None:
     return rid
 
 
+BACKFILL_LIMIT = 100
+
+
 async def backfill(client: MoonrakerClient, printer_id: str) -> int:
-    since = outcomes.last_job_end_time()
-    jobs = await client.history_list(limit=100, since=since if since > 0 else None)
-    n = 0
-    for job in jobs:
+    """Record every finished job among Moonraker's latest BACKFILL_LIMIT. Catching up from the newest
+    stored job would skip an older one the recorder missed whenever something else (orcaslicer-mcp's
+    list_print_history) had already stored a newer one; record_outcome is idempotent on job_id and only
+    fills gaps, so checking them all is safe. Returns how many finished jobs it checked."""
+    jobs = await client.history_list(limit=BACKFILL_LIMIT)
+    checked = 0
+    for job in reversed(jobs):  # Moonraker answers newest first; the jobs finished oldest first
         if job.get("status") not in FINISHED_STATUSES:
             continue
         try:
             end = float(job.get("end_time") or 0)
         except (TypeError, ValueError):
             continue
-        if end <= since:
+        if end <= 0:
             continue
         outcomes.record_outcome(job, printer_id)
-        n += 1
-    if n:
-        log.info("backfilled %d finished job(s) since %s", n, since)
-    return n
+        checked += 1
+    log.info("backfill checked %d finished job(s) among the latest %d in history", checked, len(jobs))
+    return checked
 
 
 def _should_warn(err: str, last_err: str | None) -> bool:
